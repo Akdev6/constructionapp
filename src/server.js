@@ -39,7 +39,7 @@ app.use((err, req, res, next) => {
 
 // MongoDB connection
 const PORT = process.env.PORT || 5000;
-const MONGO_URI = process.env.MONGO_URI || 'mongodb://localhost:27017/contractorapp';
+const MONGO_URI = process.env.MONGO_URI || 'MONGO_URI=mongodb+srv://developerankit0608_db_user:aZ1g8XIwImJH08NA@contractor.dnpia3p.mongodb.net/?appName=contractor';
 
 mongoose.connect(MONGO_URI)
   .then(() => {
