@@ -1,55 +1,103 @@
 require('dotenv').config();
-const express = require('express');
-const cors = require('cors');
-const morgan = require('morgan');
+const express  = require('express');
+const cors     = require('cors');
+const morgan   = require('morgan');
 const mongoose = require('mongoose');
 
 const app = express();
 
-// Middleware
-app.use(cors());
-app.use(express.json());
+// ─── Middleware ───────────────────────────────────────────────────────────────
+app.use(cors({ origin: '*' }));
+app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true }));
-app.use(morgan('dev'));
-
-// Static files (uploaded images)
+if (process.env.NODE_ENV !== 'production') app.use(morgan('dev'));
 app.use('/uploads', express.static('uploads'));
 
-// Routes — wrapped individually so one bad require doesn't kill the whole server
-try { app.use('/api/auth', require('./routes/auth')); } catch(e) { console.error('auth route failed:', e.message); }
-try { app.use('/api/users', require('./routes/users')); } catch(e) { console.error('users route failed:', e.message); }
-try { app.use('/api/surplus', require('./routes/surplus')); } catch(e) { console.error('surplus route failed:', e.message); }
-try { app.use('/api/equipment', require('./routes/equipment')); } catch(e) { console.error('equipment route failed:', e.message); }
-try { app.use('/api/buyers', require('./routes/buyers')); } catch(e) { console.error('buyers route failed:', e.message); }
-try { app.use('/api/circulars', require('./routes/circulars')); } catch(e) { console.error('circulars route failed:', e.message); }
-try { app.use('/api/directory', require('./routes/directory')); } catch(e) { console.error('directory route failed:', e.message); }
-try { app.use('/api/workforce', require('./routes/workforce')); } catch(e) { console.error('workforce route failed:', e.message); }
-try { app.use('/api/promotions', require('./routes/promotions')); } catch(e) { console.error('promotions route failed:', e.message); }
-try { app.use('/api/manpower', require('./routes/manpower')); } catch(e) { console.error('manpower route failed:', e.message); }
-try { app.use('/api/admin', require('./routes/admin')); } catch(e) { console.error('admin route failed:', e.message); }
-try { app.use('/api/notifications', require('./routes/notifications')); } catch(e) { console.error('notifications route failed:', e.message); }
+// ─── MongoDB Atlas connection (cached for serverless) ─────────────────────────
+const MONGO_URI = process.env.MONGO_URI ||
+  'mongodb+srv://developerankit0608_db_user:hhsQGXlrEhsq7BOG@contractor.dnpia3p.mongodb.net/contractorapp?retryWrites=true&w=majority&appName=contractor';
 
-app.get('/', (req, res) => res.json({ message: 'Contractor App API v1.0', status: 'running' }));
+let isConnected = false;
 
-// Error handler
+const connectDB = async () => {
+  if (isConnected) return;
+  try {
+    await mongoose.connect(MONGO_URI, {
+      serverSelectionTimeoutMS: 10000,
+      socketTimeoutMS: 45000,
+    });
+    isConnected = true;
+    console.log('✓ MongoDB Atlas connected');
+  } catch (err) {
+    console.error('✗ MongoDB connection failed:', err.message);
+    isConnected = false;
+    throw err;
+  }
+};
+
+// Connect on startup
+connectDB().catch(err => console.error('Initial DB connect failed:', err.message));
+
+// ─── DB connection middleware (ensures connection on every request for serverless) ─
+app.use(async (req, res, next) => {
+  try {
+    await connectDB();
+    next();
+  } catch (err) {
+    res.status(503).json({ success: false, message: 'Database unavailable. Try again shortly.' });
+  }
+});
+
+// ─── Health check ─────────────────────────────────────────────────────────────
+app.get('/', (req, res) => res.json({
+  message: 'ContractorApp API v1.0',
+  status:  'running',
+  db:      mongoose.connection.readyState === 1 ? 'connected ✓' : 'disconnected ✗',
+  time:    new Date().toISOString(),
+}));
+
+// ─── Routes ───────────────────────────────────────────────────────────────────
+const routes = [
+  ['/api/auth',          './routes/auth'],
+  ['/api/users',         './routes/users'],
+  ['/api/surplus',       './routes/surplus'],
+  ['/api/equipment',     './routes/equipment'],
+  ['/api/buyers',        './routes/buyers'],
+  ['/api/circulars',     './routes/circulars'],
+  ['/api/directory',     './routes/directory'],
+  ['/api/workforce',     './routes/workforce'],
+  ['/api/promotions',    './routes/promotions'],
+  ['/api/manpower',      './routes/manpower'],
+  ['/api/admin',         './routes/admin'],
+  ['/api/notifications', './routes/notifications'],
+];
+
+routes.forEach(([path, file]) => {
+  try {
+    app.use(path, require(file));
+    console.log(`✓ Route: ${path}`);
+  } catch (e) {
+    console.error(`✗ Route ${path} failed: ${e.message}`);
+  }
+});
+
+// ─── Error handler ────────────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
-  console.error(err.stack);
+  console.error('Server error:', err.message);
   res.status(500).json({ success: false, message: err.message || 'Server error' });
 });
 
-// MongoDB connection
-const PORT = process.env.PORT || 5000;
-const MONGO_URI = process.env.MONGO_URI || 'mongodb+srv://developerankit0608_db_user:hhsQGXlrEhsq7BOG@contractor.dnpia3p.mongodb.net/?appName=contractor';
+app.use((req, res) => {
+  res.status(404).json({ success: false, message: `Route ${req.method} ${req.path} not found` });
+});
 
-mongoose.connect(MONGO_URI)
-  .then(() => {
-    console.log('MongoDB connected');
-    app.listen(PORT, () => console.log(`Server running on port ${PORT}`));
-  })
-  .catch(err => {
-    console.error('MongoDB connection error:', err);
-    // Start without DB for demo purposes
-    app.listen(PORT, () => console.log(`Server running on port ${PORT} (no DB)`));
+// ─── Local server start (not used on Vercel) ──────────────────────────────────
+if (process.env.NODE_ENV !== 'production') {
+  const PORT = process.env.PORT || 5000;
+  app.listen(PORT, '0.0.0.0', () => {
+    console.log(`\n🚀 Server: http://localhost:${PORT}`);
+    console.log(`   Seed:   http://localhost:${PORT}/api/admin/seed\n`);
   });
+}
 
 module.exports = app;
