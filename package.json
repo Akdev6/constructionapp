@@ -1,5 +1,5 @@
 {
-  "name": "contractor-app-backend",
+  "name": "contractor-ap-backend",
   "version": "1.0.0",
   "main": "src/server.js",
   "engines": {
